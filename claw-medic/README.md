@@ -72,6 +72,25 @@ Each check prints `OK` (green), `WARN` (yellow), or `FAIL` (red) with a one-line
 
 ---
 
+## What it does NOT do (safety)
+
+- **No blanket process-killing.** claw-medic never runs `taskkill /F /IM node.exe`, never greps for "openclaw" and kills every match, never kills processes by name pattern.
+- **Targeted actions only.** Every process-level action is against a specific PID the tool started, or against the gateway port specifically.
+- **Scheduled-task cleanup removes task REGISTRATIONS, not running processes.** `schtasks /Delete` unregisters the task; any process currently running from that task keeps running until it exits naturally.
+- **`--fix` is off by default.** Diagnostic runs are read-only.
+
+## Warning: `openclaw gateway install --force` kills child services
+
+One of the suggested fixes is `openclaw gateway install --force`, which we delegate to OpenClaw's CLI. The `--force` flag kills whatever is bound to the gateway port so the new install can take it over. If you have other services spawned as CHILDREN of the gateway (e.g., a custom HQ server the gateway launches on startup, a companion HTTP API, a Jeff HQ auth server), **they may die with the gateway and not automatically respawn** depending on how they're wired.
+
+If you're in that setup, before running `--fix`:
+
+1. Check `claw-medic` output for which fixes it wants to apply
+2. Decide whether to run those fixes manually one at a time
+3. Have your child-service restart commands ready
+
+We'll add `--conservative` mode in v0.4 that excludes `--force` installs from auto-fix.
+
 ## What it fixes
 
 Every `FAIL` comes with a `Suggested fix:` line. If you pass `--fix`, claw-medic runs the fix.
@@ -174,11 +193,13 @@ They're complementary, not competing.
 ## Roadmap
 
 - [x] **v0.1** — 10 core checks, `--fix` mode, JSON output
-- [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption); filters gateway.log tail to last 24h
-- [ ] **v0.3** — Slack / Discord webhook alert on FAIL
-- [ ] **v0.4** — `--watch` mode: keep running, re-check every N seconds, alert on state change
-- [ ] **v0.5** — Automatic log collection → creates a single diagnostic zip for forum posts
-- [ ] **v0.6** — Backport checks from `openclaw doctor` so it's a drop-in superset
+- [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption)
+- [x] **v0.3** — Fixed `--require-session` hang on multi-gateway setups (single combined PowerShell call with 10s timeout instead of per-PID deadlock); gateway log check now filters to last 24h so stale entries stop producing false positives; `--cleanup-orphans` now prints the exact elevated-shell command when access is denied instead of silently failing
+- [ ] **v0.4** — `--conservative` mode that excludes `--force` installs from auto-fix (protects child services that would die with the gateway)
+- [ ] **v0.5** — Slack / Discord webhook alert on FAIL
+- [ ] **v0.6** — `--watch` mode: keep running, re-check every N seconds, alert on state change
+- [ ] **v0.7** — Automatic log collection → creates a single diagnostic zip for forum posts
+- [ ] **v0.8** — Backport checks from `openclaw doctor` so it's a drop-in superset
 
 ---
 

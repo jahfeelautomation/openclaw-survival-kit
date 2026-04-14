@@ -411,36 +411,61 @@ def check_session_1(report: Report) -> None:
     procs = [p for p in procs if "claw-medic" not in " ".join(p.info.get("cmdline") or []).lower()]
     if not procs:
         return  # gateway-process check already flagged this
+
+    # v0.3 fix (#claw-medic-hang): previous version spawned one PowerShell per PID,
+    # which deadlocked on multi-gateway setups. Single combined call + short timeout.
+    pids = [str(p.pid) for p in procs]
     try:
-        for p in procs:
-            ps_cmd = (
-                f"(Get-Process -Id {p.pid} -ErrorAction SilentlyContinue).SessionId"
-            )
-            r = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True, text=True, timeout=5,
-            )
-            sid = r.stdout.strip()
-            if sid == "0":
-                report.checks.append(CheckResult(
-                    name="session_1_required",
-                    severity=Severity.FAIL,
-                    message=(
-                        f"Gateway PID {p.pid} running in Session 0 (service session). "
-                        "Desktop-control skill will not work. Gateway must be launched from a "
-                        "user-interactive process to get a user session."
-                    ),
-                    fix="Stop gateway + relaunch via Startup-folder gateway.cmd (user session), "
-                        "not via Scheduled Task 'Run whether user is logged on or not'.",
-                ))
-                return
+        ps_cmd = (
+            f"$ids = @({','.join(pids)}); "
+            "Get-Process -Id $ids -ErrorAction SilentlyContinue | "
+            "Select-Object Id, SessionId | ConvertTo-Json -Compress"
+        )
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        report.checks.append(CheckResult(
+            name="session_1_required",
+            severity=Severity.WARN,
+            message=f"Could not query process session IDs ({type(e).__name__}). Skipping check.",
+        ))
+        return
+
+    if r.returncode != 0 or not r.stdout.strip():
+        report.checks.append(CheckResult(
+            name="session_1_required",
+            severity=Severity.WARN,
+            message="PowerShell returned no data for session check. Skipping.",
+        ))
+        return
+
+    try:
+        data = json.loads(r.stdout.strip())
+    except json.JSONDecodeError:
+        return
+    if isinstance(data, dict):
+        data = [data]
+    session_0_pids = [d.get("Id") for d in data if d.get("SessionId") == 0]
+    if session_0_pids:
+        report.checks.append(CheckResult(
+            name="session_1_required",
+            severity=Severity.FAIL,
+            message=(
+                f"Gateway PID(s) {session_0_pids} running in Session 0 (service session). "
+                "Desktop-control skill will not work. Gateway must be launched from a "
+                "user-interactive process to get a user session."
+            ),
+            fix="Stop gateway + relaunch via Startup-folder gateway.cmd (user session), "
+                "not via Scheduled Task 'Run whether user is logged on or not'.",
+        ))
+    else:
         report.checks.append(CheckResult(
             name="session_1_required",
             severity=Severity.OK,
-            message="Gateway process is in an interactive user session (Session >0). Desktop skill viable.",
+            message=f"All {len(data)} gateway PID(s) in interactive user session. Desktop skill viable.",
         ))
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return
 
 
 def check_watchdog_process(report: Report) -> None:
@@ -614,6 +639,10 @@ def check_bootstrap_budget(report: Report) -> None:
 
 
 def check_recent_log_errors(report: Report) -> None:
+    """
+    v0.3 fix: only consider log entries from the last 24h. Before this, the check
+    flagged stale March-23-style content from months ago — noisy false positive.
+    """
     log = OPENCLAW_DIR / "gateway.log"
     if not log.exists():
         report.checks.append(CheckResult(
@@ -622,9 +651,36 @@ def check_recent_log_errors(report: Report) -> None:
             message=f"Gateway log not found at {log}.",
         ))
         return
-    lines = _tail_file(log, n=200)
+    lines = _tail_file(log, n=500)
     if not lines:
         return
+
+    # Match OpenClaw's ISO-8601 timestamp prefix: 2026-04-13T10:20:30.123-07:00
+    ts_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+    now = time.time()
+    cutoff = now - 24 * 3600
+    recent: list[str] = []
+    for ln in lines:
+        m = ts_re.match(ln)
+        if not m:
+            continue
+        try:
+            ts_struct = time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+            # Treat as local time — log format is ambiguous but close enough for this heuristic
+            ts = time.mktime(ts_struct)
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            recent.append(ln)
+
+    if not recent:
+        report.checks.append(CheckResult(
+            name="gateway_log",
+            severity=Severity.OK,
+            message="No gateway log entries in the last 24h (or timestamps don't parse).",
+        ))
+        return
+
     flags = {
         "rate_limit": 0,
         "SIGTERM": 0,
@@ -633,7 +689,7 @@ def check_recent_log_errors(report: Report) -> None:
         "failed": 0,
         "ECONNREFUSED": 0,
     }
-    for ln in lines:
+    for ln in recent:
         lo = ln.lower()
         for key in flags:
             if key.lower() in lo:
@@ -645,14 +701,14 @@ def check_recent_log_errors(report: Report) -> None:
         report.checks.append(CheckResult(
             name="gateway_log",
             severity=sev,
-            message=f"Gateway log (last 200 lines) contains: {pretty}.",
-            details=interesting,
+            message=f"Gateway log (last 24h, {len(recent)} entries) contains: {pretty}.",
+            details={**interesting, "recent_entry_count": len(recent)},
         ))
     else:
         report.checks.append(CheckResult(
             name="gateway_log",
             severity=Severity.OK,
-            message="Gateway log tail looks clean.",
+            message=f"Gateway log tail (last 24h, {len(recent)} entries) looks clean.",
         ))
 
 
@@ -707,10 +763,15 @@ def fix_reinstall_gateway(verbose: bool = True) -> bool:
 
 
 def fix_cleanup_orphan_tasks(orphan_names: list[str], verbose: bool = True) -> bool:
-    """Windows only."""
+    """
+    Windows only. Requires admin privileges for system-created tasks.
+    If we can't delete (Access Denied), we print the exact elevated-shell command
+    the user needs to run manually instead of silently succeeding.
+    """
     if not _is_windows():
         return False
     any_failed = False
+    denied = []
     for name in orphan_names:
         try:
             r = subprocess.run(
@@ -722,12 +783,20 @@ def fix_cleanup_orphan_tasks(orphan_names: list[str], verbose: bool = True) -> b
                     print(f"  removed scheduled task: {name}")
             else:
                 any_failed = True
+                err_text = (r.stderr.strip() or r.stdout.strip() or "").lower()
+                if "access is denied" in err_text or "access denied" in err_text:
+                    denied.append(name)
                 if verbose:
                     print(f"  FAILED to remove {name}: {r.stderr.strip() or r.stdout.strip()}")
         except subprocess.TimeoutExpired:
             any_failed = True
             if verbose:
                 print(f"  timeout removing {name}")
+    if denied and verbose:
+        print("")
+        print("  Some tasks require admin. In an ELEVATED PowerShell (Run as Administrator), paste:")
+        for name in denied:
+            print(f'    schtasks /Delete /TN "{name}" /F')
     return not any_failed
 
 
