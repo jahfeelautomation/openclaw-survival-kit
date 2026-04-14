@@ -1,0 +1,87 @@
+name: Fix failed for me
+description: Report a claw-medic fix (or suggested fix) that didn't resolve the issue on your machine.
+title: "[fix-failure] "
+labels:
+  - fix-failure
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping the kit get better. This template is for when claw-medic
+        ran a fix (`--fix`) or you followed a suggested fix manually, and the
+        underlying problem is still there.
+
+        The easiest way to file is:
+
+        ```
+        python3 claw_medic.py --report \
+          --fix-name gateway_process \
+          --outcome "fix ran but port 18789 still not bound"
+        ```
+
+        That generates a PII-scrubbed JSON report and this pre-filled URL. Attach
+        the JSON below and you're done.
+
+  - type: input
+    id: claw-medic-version
+    attributes:
+      label: claw-medic version
+      placeholder: "0.5"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 / macOS 14.5 / Ubuntu 22.04"
+    validations:
+      required: true
+
+  - type: input
+    id: fix-name
+    attributes:
+      label: Which fix failed
+      description: The `name` field from the check (e.g. `gateway_process`, `port_bound`, `startup_mechanism`).
+      placeholder: "gateway_process"
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What happened
+      description: One or two lines. What did claw-medic say, and what was actually true on your machine afterwards?
+      placeholder: |
+        claw-medic said "fixed" but port 18789 is still not bound 30 seconds later.
+        `openclaw gateway install --force` returned exit 0 but no node process appeared.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostic-json
+    attributes:
+      label: Full diagnostic JSON
+      description: |
+        Attach the file `claw-medic-report-YYYYMMDD-HHMMSS.json` that `--report` generated
+        in your current directory. Drag-and-drop works. The file is already PII-scrubbed
+        (home paths, user profiles, public IPs, emails) but please open it and skim before
+        attaching.
+      placeholder: "Drop the JSON file here."
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Setup oddities, custom forks, other tools running, whatever context might matter.
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before you file
+      options:
+        - label: I read the scrubbed JSON and removed anything still sensitive.
+          required: true
+        - label: I checked the repo's existing issues for duplicates.
+          required: false

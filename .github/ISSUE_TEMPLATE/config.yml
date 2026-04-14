@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the README first
+    url: https://github.com/jahfeelautomation/openclaw-survival-kit/blob/main/README.md
+    about: The kit's README covers which upstream bugs it addresses. Your issue might already have a documented fix.

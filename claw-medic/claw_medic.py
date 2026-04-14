@@ -49,6 +49,9 @@ except ImportError:
 
 # ---------- constants ----------
 
+VERSION = "0.5"
+REPO_URL = "https://github.com/jahfeelautomation/openclaw-survival-kit"
+
 DEFAULT_GATEWAY_PORT = 18789  # upstream default — actual port is resolved from config/env/CLI
 OPENCLAW_DIR = Path.home() / ".openclaw"
 WORKSPACE_DIR = OPENCLAW_DIR / "workspace"
@@ -949,6 +952,125 @@ def apply_fixes(report: Report, cleanup_orphans: bool, conservative: bool = Fals
     print(summary)
 
 
+# ---------- v0.5: community feedback reports ----------
+
+# PII scrubbers. These are heuristics, not a guarantee — users always review the
+# saved JSON before filing. The point is to catch the common cases so the
+# default is "safe to share."
+
+_SCRUB_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Unix home directories: /home/foo, /Users/foo
+    (re.compile(r"/(home|Users)/[^/\s\"']+"), "~"),
+    # Windows user profile: C:\Users\Foo (case-insensitive, either slash)
+    (re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s\"']+"), "%USERPROFILE%"),
+    # IPv4 addresses (except loopback — loopback is useful to keep)
+    (re.compile(r"(?<!\d)(?!127\.)(?!0\.)"
+                r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}"
+                r"(?:25[0-5]|2[0-4]\d|[01]?\d?\d)(?!\d)"), "[ip-redacted]"),
+    # Email addresses
+    (re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"), "[email-redacted]"),
+]
+
+
+def _scrub_text(s: str) -> str:
+    """Strip likely-PII patterns from a string.
+
+    First pass: substitute the user's actual home directory literally (handles
+    non-standard layouts like containers, Cowork sandboxes, corporate-managed
+    Windows profiles). Second pass: regex patterns for anything the literal
+    substitution missed.
+    """
+    if not isinstance(s, str):
+        return s
+    home = str(Path.home())
+    if home and home != "/" and home in s:
+        s = s.replace(home, "~")
+    # Also handle uppercase Windows drive letter variants (C:\Users\... vs c:\users\...)
+    if _is_windows() and home:
+        s = s.replace(home.replace("\\", "/"), "~")
+    for pat, repl in _SCRUB_PATTERNS:
+        s = pat.sub(repl, s)
+    return s
+
+
+def _scrub_value(v):
+    """Recursively scrub a JSON-ish value (dict / list / str / scalar)."""
+    if isinstance(v, str):
+        return _scrub_text(v)
+    if isinstance(v, dict):
+        return {k: _scrub_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_scrub_value(x) for x in v]
+    return v
+
+
+def build_report_payload(report: Report, fix_name: Optional[str], outcome: Optional[str]) -> dict:
+    """
+    Build the scrubbed diagnostic payload that ships with a community fix-failure report.
+    Everything user-identifying is replaced in-place; the shape is stable so the
+    5am triage task can parse it mechanically.
+    """
+    import platform
+    return {
+        "claw_medic_version": VERSION,
+        "reported_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "python": sys.version.split()[0],
+        "gateway_port": report.gateway_port,
+        "require_session_1": report.require_session_1,
+        "fix_name": fix_name,
+        "outcome": outcome,
+        "checks": [_scrub_value(asdict(c)) for c in report.checks],
+    }
+
+
+def emit_report(report: Report, fix_name: Optional[str], outcome: Optional[str]) -> Path:
+    """
+    Save a scrubbed diagnostic report to disk and print the pre-filled GitHub
+    issue URL. Returns the path to the saved JSON so callers can reference it.
+    Never posts anything — the user reviews and files themselves.
+    """
+    payload = build_report_payload(report, fix_name, outcome)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    out_path = Path.cwd() / f"claw-medic-report-{ts}.json"
+    out_path.write_text(json.dumps(payload, indent=2, default=str))
+
+    # Build the pre-filled issue URL. GitHub issue forms accept template field
+    # pre-population via query string. We only prefill short fields here; the
+    # full scrubbed JSON is attached by the user manually after review.
+    from urllib.parse import urlencode, quote
+    failure_summary = (
+        f"{fix_name or 'unknown-fix'}: {outcome or 'fix did not resolve the issue'}"
+    )
+    qs = urlencode({
+        "template": "fix-failure.yml",
+        "title": f"[fix-failure] {failure_summary}",
+        "claw-medic-version": VERSION,
+        "os": payload["os"],
+        "fix-name": fix_name or "",
+        "outcome": outcome or "",
+    }, quote_via=quote)
+    issue_url = f"{REPO_URL}/issues/new?{qs}"
+
+    print()
+    print(_color("=== claw-medic community report ===", "36;1"))
+    print(f"Scrubbed diagnostic saved: {out_path}")
+    print(f"Size: {out_path.stat().st_size} bytes   (review before sharing)")
+    print()
+    print("Steps to file:")
+    print(f"  1. Open: {issue_url}")
+    print(f"  2. Scroll to 'Full diagnostic JSON' — attach {out_path.name}")
+    print(f"  3. Review the pre-filled fields, edit anything wrong, submit")
+    print()
+    print("Scrubber replaces: home paths (~), Windows user profiles (%USERPROFILE%),")
+    print("public IPs ([ip-redacted]), email addresses ([email-redacted]). Loopback")
+    print("IPs (127.*) and ports are kept. If you see anything sensitive still in the")
+    print("JSON, delete those fields before attaching — the scrubber is a heuristic,")
+    print("not a guarantee.")
+    return out_path
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="claw-medic", description=__doc__)
     parser.add_argument("--fix", action="store_true", help="apply suggested fixes")
@@ -966,6 +1088,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--require-session", default=None,
                         help="on Windows: require gateway to run in session N (usually 1, for desktop-skill users). "
                              "Default: off (most users don't need this).")
+    parser.add_argument("--report", action="store_true",
+                        help="after diagnostic, save a PII-scrubbed JSON report and print a pre-filled "
+                             "GitHub issue URL so you can file a fix-failure report against the kit. "
+                             "Nothing is posted — you review and submit manually.")
+    parser.add_argument("--fix-name", default=None,
+                        help="with --report: the check/fix that failed (e.g. 'gateway_process', "
+                             "'startup_mechanism'). Prefills the issue title and body.")
+    parser.add_argument("--outcome", default=None,
+                        help="with --report: one-line description of what happened "
+                             "(e.g. 'fix ran but gateway still not bound to 18789').")
+    parser.add_argument("--version", action="version", version=f"claw-medic {VERSION}")
     args = parser.parse_args(argv)
 
     selected = [s.strip() for s in args.checks.split(",") if s.strip()] or None
@@ -991,7 +1124,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("\n--- re-checking after fixes ---\n")
         post = run_checks(selected, port_override=args.port, require_session_1=require_session_1)
         print_report(post, quiet=args.quiet)
+        # Use the post-fix report for the --report payload — that's what the user
+        # wants to share ("here's what still broke after I applied your fix").
+        if args.report:
+            emit_report(post, args.fix_name, args.outcome)
         return post.exit_code
+
+    if args.report:
+        emit_report(report, args.fix_name, args.outcome)
 
     return report.exit_code
 

@@ -91,6 +91,24 @@ If you're in that setup, before running `--fix`:
 
 **v0.4 ships this as `--fix --conservative`.** In conservative mode, claw-medic treats any fix backed by `openclaw gateway install --force` as a manual step: it prints the exact command and the reason it was skipped, but doesn't run it. You decide when to take the hit on child services.
 
+---
+
+## Report a failed fix (v0.5)
+
+The kit is only useful if it knows which fixes actually work on real machines. If a fix failed for you, file a short report:
+
+```bash
+python3 claw_medic.py --report \
+    --fix-name gateway_process \
+    --outcome "fix ran but port 18789 still not bound"
+```
+
+claw-medic saves a **PII-scrubbed JSON** (`claw-medic-report-YYYYMMDD-HHMMSS.json`) to your current directory and prints a pre-filled GitHub issue URL. The scrubber replaces home directories (`~`), Windows user profiles (`%USERPROFILE%`), public IPs (`[ip-redacted]`), and email addresses (`[email-redacted]`). Loopback and ports stay intact because they're useful. Nothing is posted — you open the URL, attach the JSON, review, submit.
+
+We process reports via a daily triage task against the repo's issues tracker. Duplicates get linked to the original, version-specific ones get routed to the right milestone, and patterns across reports become new checks or tightened fixes in the next claw-medic release. Every fix that gets smarter this way is credited in the commit message to the report that caught it.
+
+If you're seeing a bug claw-medic doesn't check for at all, use the "New OpenClaw bug / new check request" template on the same issues page instead — that template captures a different shape of report.
+
 ## What it fixes
 
 Every `FAIL` comes with a `Suggested fix:` line. If you pass `--fix`, claw-medic runs the fix.
@@ -142,6 +160,11 @@ python3 claw_medic.py --fix --cleanup-orphans
 # Safer --fix: skip `openclaw gateway install --force` (protects child services
 # like HQ servers, watchdog children, etc. that were launched by the gateway).
 python3 claw_medic.py --fix --conservative
+
+# Report a failed fix back to the kit (PII-scrubbed, nothing is posted — you review).
+python3 claw_medic.py --report \
+    --fix-name gateway_process \
+    --outcome "fix ran but port 18789 still not bound"
 
 # Specific check categories
 python3 claw_medic.py --checks gateway,watchdog,bootstrap
@@ -200,10 +223,12 @@ They're complementary, not competing.
 - [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption)
 - [x] **v0.3** — Fixed `--require-session` hang on multi-gateway setups (single combined PowerShell call with 10s timeout instead of per-PID deadlock); gateway log check now filters to last 24h so stale entries stop producing false positives; `--cleanup-orphans` now prints the exact elevated-shell command when access is denied instead of silently failing
 - [x] **v0.4** — `--conservative` mode: with `--fix`, skips `openclaw gateway install --force` (which would kill child services like HQ servers / watchdog children spawned by the gateway) and prints it as a manual step instead. Summary line now counts deferred fixes separately from applied fixes.
-- [ ] **v0.5** — Slack / Discord webhook alert on FAIL
-- [ ] **v0.6** — `--watch` mode: keep running, re-check every N seconds, alert on state change
-- [ ] **v0.7** — Automatic log collection → creates a single diagnostic zip for forum posts
-- [ ] **v0.8** — Backport checks from `openclaw doctor` so it's a drop-in superset
+- [x] **v0.5** — `--report` mode: PII-scrubbed diagnostic JSON + pre-filled GitHub issue URL for fix-failure reports. Nothing is auto-posted; user reviews and submits. Paired with `.github/ISSUE_TEMPLATE/fix-failure.yml` and `new-bug.yml` so reports are structured and machine-readable. First step of the community feedback loop: other OpenClaw users' fix-failure reports become the input for the next version's checks and tightened fixes.
+- [ ] **v0.6** — Daily triage task extension: read incoming kit issues, deduplicate against what's already known, draft PRs / replies for the maintainer to review. No auto-merge.
+- [ ] **v0.7** — Slack / Discord webhook alert on FAIL
+- [ ] **v0.8** — `--watch` mode: keep running, re-check every N seconds, alert on state change
+- [ ] **v0.9** — Automatic log collection → creates a single diagnostic zip for forum posts
+- [ ] **v1.0** — Backport checks from `openclaw doctor` so it's a drop-in superset
 
 ---
 

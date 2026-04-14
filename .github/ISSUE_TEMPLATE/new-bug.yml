@@ -1,0 +1,68 @@
+name: New OpenClaw bug / new check request
+description: Report an OpenClaw bug you're seeing that claw-medic doesn't currently check for, or request a new check.
+title: "[new-bug] "
+labels:
+  - new-bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for bugs claw-medic currently MISSES — either the symptom
+        is absent from the checklist entirely, or the check runs but mis-classifies it.
+
+        If claw-medic ran a fix that didn't work, use the "Fix failed for me"
+        template instead.
+
+  - type: input
+    id: claw-medic-version
+    attributes:
+      label: claw-medic version you're on
+      placeholder: "0.5"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 / macOS 14.5 / Ubuntu 22.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What's broken on your machine
+      description: What's the user-visible symptom? Gateway offline? Skill not loading? Desktop skill not working? Heartbeat drifting?
+    validations:
+      required: true
+
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root cause (if you know it)
+      description: Upstream OpenClaw issue number, log excerpt, config file that causes it — anything you've figured out.
+
+  - type: textarea
+    id: suggested-check
+    attributes:
+      label: What would the check look like?
+      description: |
+        If you were adding this as a claw-medic check, what would it inspect?
+        e.g. "read `~/.openclaw/openclaw.json`, flag if `agents.defaults.bootstrapMaxChars` exceeds 20000".
+
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix (optional)
+      description: If you know a one-shot fix, describe the command or config change.
+
+  - type: textarea
+    id: diagnostic-json
+    attributes:
+      label: claw-medic diagnostic (optional but helpful)
+      description: |
+        Run `python3 claw_medic.py --report --fix-name none --outcome "not-yet-checked"`
+        and drop the JSON here. It gives triage a machine-readable baseline even for
+        bugs we don't have checks for yet.
