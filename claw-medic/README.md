@@ -89,7 +89,7 @@ If you're in that setup, before running `--fix`:
 2. Decide whether to run those fixes manually one at a time
 3. Have your child-service restart commands ready
 
-We'll add `--conservative` mode in v0.4 that excludes `--force` installs from auto-fix.
+**v0.4 ships this as `--fix --conservative`.** In conservative mode, claw-medic treats any fix backed by `openclaw gateway install --force` as a manual step: it prints the exact command and the reason it was skipped, but doesn't run it. You decide when to take the hit on child services.
 
 ## What it fixes
 
@@ -138,6 +138,10 @@ python3 claw_medic.py --fix
 
 # Also clean up orphan scheduled tasks
 python3 claw_medic.py --fix --cleanup-orphans
+
+# Safer --fix: skip `openclaw gateway install --force` (protects child services
+# like HQ servers, watchdog children, etc. that were launched by the gateway).
+python3 claw_medic.py --fix --conservative
 
 # Specific check categories
 python3 claw_medic.py --checks gateway,watchdog,bootstrap
@@ -195,7 +199,7 @@ They're complementary, not competing.
 - [x] **v0.1** — 10 core checks, `--fix` mode, JSON output
 - [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption)
 - [x] **v0.3** — Fixed `--require-session` hang on multi-gateway setups (single combined PowerShell call with 10s timeout instead of per-PID deadlock); gateway log check now filters to last 24h so stale entries stop producing false positives; `--cleanup-orphans` now prints the exact elevated-shell command when access is denied instead of silently failing
-- [ ] **v0.4** — `--conservative` mode that excludes `--force` installs from auto-fix (protects child services that would die with the gateway)
+- [x] **v0.4** — `--conservative` mode: with `--fix`, skips `openclaw gateway install --force` (which would kill child services like HQ servers / watchdog children spawned by the gateway) and prints it as a manual step instead. Summary line now counts deferred fixes separately from applied fixes.
 - [ ] **v0.5** — Slack / Discord webhook alert on FAIL
 - [ ] **v0.6** — `--watch` mode: keep running, re-check every N seconds, alert on state change
 - [ ] **v0.7** — Automatic log collection → creates a single diagnostic zip for forum posts

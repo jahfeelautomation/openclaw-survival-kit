@@ -6,11 +6,12 @@ Runs a series of end-to-end health checks, reports findings in plain English, an
 optionally applies one-shot fixes. No daemon, no config file, no lock-in.
 
 Usage:
-  python3 claw_medic.py                        # diagnose (read-only)
-  python3 claw_medic.py --fix                  # apply suggested fixes
+  python3 claw_medic.py                           # diagnose (read-only)
+  python3 claw_medic.py --fix                     # apply suggested fixes
+  python3 claw_medic.py --fix --conservative      # --fix, but skip reinstall-gateway (protects child services)
   python3 claw_medic.py --fix --cleanup-orphans
-  python3 claw_medic.py --json                 # machine-readable output
-  python3 claw_medic.py --quiet                # only print FAIL lines
+  python3 claw_medic.py --json                    # machine-readable output
+  python3 claw_medic.py --quiet                   # only print FAIL lines
   python3 claw_medic.py --checks gateway,bootstrap
 
 Exit codes:
@@ -714,9 +715,16 @@ def check_recent_log_errors(report: Report) -> None:
 
 # ---------- fixes ----------
 
-def fix_start_gateway(verbose: bool = True) -> bool:
+def fix_start_gateway(verbose: bool = True, conservative: bool = False) -> Optional[bool]:
+    """
+    Returns True on success, False on failure, None when deferred under --conservative.
+    """
     gateway_cmd = OPENCLAW_DIR / ("gateway.cmd" if _is_windows() else "gateway.sh")
     if not gateway_cmd.exists():
+        if conservative:
+            # Caller (apply_fixes) handles the user-facing "SKIPPED" line; we stay quiet
+            # so we don't duplicate the message.
+            return None
         print(f"  gateway launcher missing at {gateway_cmd}; running reinstall first")
         if not fix_reinstall_gateway(verbose):
             return False
@@ -881,8 +889,21 @@ def print_report(report: Report, quiet: bool = False) -> None:
     )
 
 
-def apply_fixes(report: Report, cleanup_orphans: bool) -> None:
+def apply_fixes(report: Report, cleanup_orphans: bool, conservative: bool = False) -> None:
+    """
+    --conservative behavior (v0.4):
+    If set, any fix whose fix_fn is `fix_reinstall_gateway` is SKIPPED and printed
+    as a manual step instead. Rationale: `openclaw gateway install --force` kills
+    whatever is bound to the gateway port so the new install can take it over.
+    Child services spawned by the gateway (e.g. Jeff HQ on port 3333) may die
+    with it and not auto-respawn. Conservative users want to stop, decide, and
+    restart their child services themselves.
+    `fix_start_gateway` also respects --conservative: if it would fall through
+    to reinstall (because gateway.cmd/gateway.sh is missing), it prints the
+    manual command instead of running --force itself.
+    """
     fixes_applied = 0
+    fixes_deferred = 0
     for c in report.checks:
         if c.severity == Severity.OK or not c.fix_fn_name:
             continue
@@ -890,25 +911,51 @@ def apply_fixes(report: Report, cleanup_orphans: bool) -> None:
             continue
         print(f"\nApplying fix for {c.name}:")
         print(f"  {c.message}")
-        ok = False
+
+        if conservative and c.fix_fn_name == "fix_reinstall_gateway":
+            print(f"  -> {_color('SKIPPED (--conservative)', '33;1')}: "
+                  f"`openclaw gateway install --force` may kill child services "
+                  f"(e.g. HQ servers, watchdog children) that were launched by the gateway.")
+            print(f"  Run manually when you're ready to handle any child-service restarts:")
+            print(f"    openclaw gateway install --force")
+            fixes_deferred += 1
+            continue
+
+        ok: Optional[bool] = False
         if c.fix_fn_name == "fix_start_gateway":
-            ok = fix_start_gateway()
+            ok = fix_start_gateway(conservative=conservative)
         elif c.fix_fn_name == "fix_reinstall_gateway":
             ok = fix_reinstall_gateway()
         elif c.fix_fn_name == "fix_cleanup_orphan_tasks":
             orphans = c.details.get("orphans", [])
             ok = fix_cleanup_orphan_tasks(orphans)
-        if ok:
+        if ok is None:
+            # Conservative deferral from fix_start_gateway (gateway.cmd missing, would have fallen
+            # through to `openclaw gateway install --force`). Treat like the explicit skip above.
+            print(f"  -> {_color('SKIPPED (--conservative)', '33;1')}: "
+                  f"gateway launcher missing; would have run "
+                  f"`openclaw gateway install --force` to recreate it.")
+            print(f"  Run manually when you're ready to handle any child-service restarts:")
+            print(f"    openclaw gateway install --force")
+            fixes_deferred += 1
+        elif ok:
             fixes_applied += 1
             print(f"  -> {_color('fixed', '32;1')}")
         else:
             print(f"  -> {_color('failed, manual intervention may be needed', '31;1')}")
-    print(f"\nFixes applied: {fixes_applied}")
+    summary = f"\nFixes applied: {fixes_applied}"
+    if fixes_deferred:
+        summary += f"   Deferred (--conservative): {fixes_deferred}"
+    print(summary)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="claw-medic", description=__doc__)
     parser.add_argument("--fix", action="store_true", help="apply suggested fixes")
+    parser.add_argument("--conservative", action="store_true",
+                        help="with --fix: skip `openclaw gateway install --force` (which may kill "
+                             "child services) and print it as a manual step instead. Safer on hosts "
+                             "that run HQ servers or watchdog children spawned by the gateway.")
     parser.add_argument("--cleanup-orphans", action="store_true",
                         help="with --fix, also remove never-run scheduled tasks")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
@@ -939,7 +986,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print_report(report, quiet=args.quiet)
 
     if args.fix:
-        apply_fixes(report, cleanup_orphans=args.cleanup_orphans)
+        apply_fixes(report, cleanup_orphans=args.cleanup_orphans, conservative=args.conservative)
         # Re-run the checks after fixing to give the user an up-to-date picture
         print("\n--- re-checking after fixes ---\n")
         post = run_checks(selected, port_override=args.port, require_session_1=require_session_1)
