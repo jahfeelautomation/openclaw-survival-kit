@@ -24,20 +24,49 @@ Any one of these is a bug. All five at once is a 45-minute outage. claw-medic ch
 
 ---
 
+## Port is auto-detected (v0.2)
+
+Your gateway might not be on 18789. OpenClaw resolves port in this order:
+
+1. `--port` CLI flag
+2. `OPENCLAW_GATEWAY_PORT` / `OPENCLAW_PORT` environment variable
+3. `~/.openclaw/openclaw.json` → `gateway.port`
+4. default `18789`
+
+claw-medic follows the same order. All port-related checks use the resolved port, not a hardcoded default. You can override with `--port 19000`.
+
+## Startup mechanisms are auto-detected (v0.2)
+
+OpenClaw supports multiple ways to auto-start the gateway, and which one is active depends on your OS, your install history, and your permission state:
+
+- **Windows Scheduled Task** (default first choice on Windows)
+- **Windows Startup-folder launcher** (fallback when Scheduled Task creation is denied — e.g., no admin)
+- **macOS launchd plist** (`~/Library/LaunchAgents/*openclaw*.plist`)
+- **Linux systemd user unit** (`~/.config/systemd/user/openclaw-gateway.service` etc.)
+- **Launcher script** — `~/.openclaw/gateway.cmd` or `gateway.sh`
+
+claw-medic reports which one it found, flags if multiple are present (you can end up with duplicate gateway instances), and flags if none are present (no auto-start at login).
+
+## Session 1 check is OPT-IN
+
+On Windows, a gateway started via Scheduled Task with "Run whether user is logged on or not" lands in Session 0 — the non-interactive service session. That's fine for most users. But if you rely on the desktop-control skill (screen capture, mouse/keyboard automation of the logged-in user's UI), the gateway MUST be in the user's interactive session.
+
+Pass `--require-session 1` to enforce this check. Default: off.
+
 ## What it checks
 
 When you run `claw-medic` (no args), it does this in under 10 seconds:
 
-1. **Gateway process alive?** Looks for a `node.exe` (or `node`) running `openclaw/dist/index.js gateway --port 18789`.
-2. **Port actually bound?** Opens a TCP connection to `localhost:18789` to confirm the port is accepting connections.
-3. **HTTP 200 from `/healthz`?** Real end-to-end health check. Follows redirects.
-4. **Startup launcher present?** Confirms `~/.openclaw/gateway.cmd` exists AND the Startup-folder shortcut exists at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw Gateway.cmd`.
-5. **Watchdog process alive?** Looks for a `powershell.exe` running `openclaw-watchdog.ps1` (or similarly named watchdog script).
-6. **Watchdog-checker scheduled task enabled + recently fired?** Also flags if the task reports `LastResult=0` but the watchdog it's supposed to supervise isn't running (false-green state).
-7. **Any orphan scheduled tasks?** Flags tasks with `LastRun=11/30/1999` or `LastResult=267011` (never-run + error code) that were configured but never triggered.
-8. **OpenClaw version?** Reads `openclaw --version` and cross-references known breaking releases (e.g., v2026.4.10 sandbox path change).
-9. **SOUL.md / AGENTS.md bootstrap budget?** Reports char count per file, flags any file over `bootstrapMaxChars` (default 20,000) that will get silently truncated.
-10. **Recent log errors?** Tails `~/.openclaw/gateway.log` for the last 50 lines, highlights any lines containing `error`, `failed`, `rate_limit`, `truncating`, `SIGTERM`.
+1. **Gateway process alive?** Any process with `openclaw gateway` in the command line (we don't hardcode `--port` so we catch instances on custom ports).
+2. **Configured port bound?** TCP connect to the port resolved from config/env/flag. If your gateway is on 19000, we check 19000.
+3. **HTTP 200 from `/healthz`?** Real end-to-end health check against the resolved port.
+4. **Startup mechanism?** Reports which of Scheduled Task / Startup-folder / launchd / systemd / launcher script are in use. Flags multiple-mechanism conflicts.
+5. **(Opt-in) Session 1 check** — with `--require-session 1`, verifies gateway PID is in an interactive user session.
+6. **Watchdog process alive?** Looks for `openclaw-watchdog` in running process cmdlines.
+7. **Orphan scheduled tasks?** Flags Windows tasks with `LastRun=1999` or `LastResult=267011` (never-run + error code) that were configured but never triggered.
+8. **OpenClaw version?** Reads `openclaw --version`, cross-references the known-bad-version registry (e.g., v2026.4.10 sandbox path change).
+9. **Bootstrap budget?** Reads SOUL.md, USER.md, AGENTS.md, MEMORY.md, IDENTITY.md, PROJECT.md char counts. Flags any file over the per-file 20,000 limit (silent truncation). Flags total over 150,000 (over budget).
+10. **Recent log errors?** Scans `~/.openclaw/gateway.log` tail for error/failed/rate_limit/truncating/SIGTERM patterns.
 
 Each check prints `OK` (green), `WARN` (yellow), or `FAIL` (red) with a one-line plain-English explanation.
 
@@ -94,6 +123,12 @@ python3 claw_medic.py --fix --cleanup-orphans
 # Specific check categories
 python3 claw_medic.py --checks gateway,watchdog,bootstrap
 
+# Override the gateway port (otherwise read from ~/.openclaw/openclaw.json)
+python3 claw_medic.py --port 19000
+
+# Windows + desktop-control skill users: require gateway in Session 1
+python3 claw_medic.py --require-session 1
+
 # JSON output (for piping into monitoring)
 python3 claw_medic.py --json
 
@@ -138,11 +173,12 @@ They're complementary, not competing.
 
 ## Roadmap
 
-- [x] **v0.1** — 10 core checks, Windows + macOS + Linux, `--fix` mode, JSON output
-- [ ] **v0.2** — Slack / Discord webhook alert on FAIL
-- [ ] **v0.3** — `--watch` mode: keep running, re-check every N seconds, alert on state change
-- [ ] **v0.4** — Automatic log collection → creates a single diagnostic zip for forum posts
-- [ ] **v0.5** — Backport checks from `openclaw doctor` so it's a drop-in superset
+- [x] **v0.1** — 10 core checks, `--fix` mode, JSON output
+- [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption); filters gateway.log tail to last 24h
+- [ ] **v0.3** — Slack / Discord webhook alert on FAIL
+- [ ] **v0.4** — `--watch` mode: keep running, re-check every N seconds, alert on state change
+- [ ] **v0.5** — Automatic log collection → creates a single diagnostic zip for forum posts
+- [ ] **v0.6** — Backport checks from `openclaw doctor` so it's a drop-in superset
 
 ---
 

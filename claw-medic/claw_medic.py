@@ -48,10 +48,10 @@ except ImportError:
 
 # ---------- constants ----------
 
-GATEWAY_PORT = 18789
-GATEWAY_HEALTH_URL = f"http://localhost:{GATEWAY_PORT}/healthz"
+DEFAULT_GATEWAY_PORT = 18789  # upstream default — actual port is resolved from config/env/CLI
 OPENCLAW_DIR = Path.home() / ".openclaw"
 WORKSPACE_DIR = OPENCLAW_DIR / "workspace"
+CONFIG_PATH = OPENCLAW_DIR / "openclaw.json"
 BOOTSTRAP_CHAR_LIMIT = 20_000   # upstream default agents.defaults.bootstrapMaxChars
 BOOTSTRAP_TOTAL_LIMIT = 150_000  # agents.defaults.bootstrapTotalMaxChars
 
@@ -61,6 +61,46 @@ KNOWN_BAD_VERSIONS = {
         "Pin to 2026.4.9 or upgrade to 2026.4.11+ once released."
     ),
 }
+
+
+def resolve_gateway_port(cli_override: Optional[int] = None) -> int:
+    """
+    Resolve the gateway port using OpenClaw's documented precedence:
+        1. --port CLI flag (cli_override here)
+        2. OPENCLAW_GATEWAY_PORT environment variable
+        3. ~/.openclaw/openclaw.json -> gateway.port
+        4. default 18789
+    """
+    if cli_override:
+        return cli_override
+    env_port = os.environ.get("OPENCLAW_GATEWAY_PORT") or os.environ.get("OPENCLAW_PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except ValueError:
+            pass
+    if CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            port = cfg.get("gateway", {}).get("port")
+            if isinstance(port, int):
+                return port
+        except (OSError, json.JSONDecodeError):
+            pass
+    return DEFAULT_GATEWAY_PORT
+
+
+def resolve_gateway_bind() -> str:
+    """Read bind address from config, default loopback."""
+    if CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            bind = cfg.get("gateway", {}).get("bind")
+            if isinstance(bind, str):
+                return bind
+        except (OSError, json.JSONDecodeError):
+            pass
+    return "loopback"
 
 
 # ---------- data types ----------
@@ -84,6 +124,8 @@ class CheckResult:
 @dataclass
 class Report:
     checks: list[CheckResult] = field(default_factory=list)
+    gateway_port: int = DEFAULT_GATEWAY_PORT
+    require_session_1: bool = False
 
     @property
     def exit_code(self) -> int:
@@ -148,15 +190,73 @@ def _port_is_bound(port: int, timeout: float = 1.5) -> bool:
         return False
 
 
-def _http_healthz(timeout: float = 4.0) -> tuple[bool, str]:
+def _http_healthz(port: int, timeout: float = 4.0) -> tuple[bool, str]:
+    url = f"http://127.0.0.1:{port}/healthz"
     try:
-        req = Request(GATEWAY_HEALTH_URL, headers={"User-Agent": "claw-medic/0.1"})
+        req = Request(url, headers={"User-Agent": "claw-medic/0.2"})
         with urlopen(req, timeout=timeout) as resp:
             return (200 <= resp.status < 300, f"HTTP {resp.status}")
     except URLError as e:
         return False, f"URLError: {e.reason}"
     except (TimeoutError, ConnectionError, OSError) as e:
         return False, f"{type(e).__name__}: {e}"
+
+
+def _detect_startup_mechanism() -> dict:
+    """
+    Report which gateway startup mechanism(s) are present on this host.
+    Returns a dict with boolean flags + descriptive notes.
+    """
+    info = {
+        "scheduled_task": False,
+        "startup_folder": False,
+        "launcher_script": False,
+        "systemd_unit": False,
+        "launchd_plist": False,
+        "notes": [],
+    }
+    # Windows: scheduled task
+    if _is_windows():
+        try:
+            r = subprocess.run(
+                ["schtasks", "/Query", "/TN", "OpenClaw Gateway"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                info["scheduled_task"] = True
+                if "Disabled" in r.stdout:
+                    info["notes"].append("Scheduled Task 'OpenClaw Gateway' is present but DISABLED.")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        startup_cmd = (
+            Path(os.environ.get("APPDATA", ""))
+            / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+            / "OpenClaw Gateway.cmd"
+        )
+        if startup_cmd.exists():
+            info["startup_folder"] = True
+        gateway_cmd = OPENCLAW_DIR / "gateway.cmd"
+        if gateway_cmd.exists():
+            info["launcher_script"] = True
+    # Linux: systemd
+    elif sys.platform.startswith("linux"):
+        for unit_name in ("openclaw-gateway.service", "openclaw.service"):
+            for unit_dir in (Path.home() / ".config/systemd/user", Path("/etc/systemd/system")):
+                if (unit_dir / unit_name).exists():
+                    info["systemd_unit"] = True
+                    info["notes"].append(f"systemd unit: {unit_dir / unit_name}")
+    # macOS: launchd
+    elif sys.platform == "darwin":
+        for plist_dir in (Path.home() / "Library/LaunchAgents", Path("/Library/LaunchAgents")):
+            for plist in plist_dir.glob("*openclaw*.plist"):
+                info["launchd_plist"] = True
+                info["notes"].append(f"launchd plist: {plist}")
+    # Universal: gateway launcher script
+    for candidate in (OPENCLAW_DIR / "gateway.cmd", OPENCLAW_DIR / "gateway.sh"):
+        if candidate.exists():
+            info["launcher_script"] = True
+            break
+    return info
 
 
 def _find_process_by_cmdline_pattern(pattern: re.Pattern) -> list[psutil.Process]:
@@ -185,105 +285,162 @@ def _tail_file(path: Path, n: int = 50) -> list[str]:
 # ---------- checks ----------
 
 def check_gateway_process(report: Report) -> None:
-    pattern = re.compile(r"openclaw.*gateway.*--port\s+(\d+)", re.IGNORECASE)
+    # Match the gateway by cmdline containing both "openclaw" and "gateway" — don't
+    # assume a specific port flag, because many users run with --port or env override.
+    pattern = re.compile(r"openclaw.*gateway|gateway.*openclaw", re.IGNORECASE)
     procs = _find_process_by_cmdline_pattern(pattern)
+    # Filter out claw-medic itself and common false positives
+    procs = [p for p in procs if "claw-medic" not in " ".join(p.info.get("cmdline") or []).lower()
+             and "claw_medic" not in " ".join(p.info.get("cmdline") or []).lower()]
     if not procs:
-        # fallback: any node process with openclaw in cmdline
-        fallback = _find_process_by_cmdline_pattern(re.compile(r"openclaw.*gateway", re.IGNORECASE))
-        if fallback:
-            report.checks.append(CheckResult(
-                name="gateway_process",
-                severity=Severity.WARN,
-                message=f"Found {len(fallback)} node process(es) with 'openclaw gateway' in cmdline but no explicit --port flag. Verify port 18789 separately.",
-                details={"pids": [p.pid for p in fallback]},
-            ))
-            return
         report.checks.append(CheckResult(
             name="gateway_process",
             severity=Severity.FAIL,
             message="No OpenClaw gateway node process running.",
-            fix=f'Start-Process -WindowStyle Hidden "{OPENCLAW_DIR}\\gateway.cmd"' if _is_windows()
-                else f'nohup {OPENCLAW_DIR}/gateway.sh &',
+            fix=f'Start the gateway launcher: "{OPENCLAW_DIR / "gateway.cmd"}"' if _is_windows()
+                else f'nohup {OPENCLAW_DIR / "gateway.sh"} & (or re-run: openclaw gateway install --force)',
             fix_fn_name="fix_start_gateway",
         ))
         return
     pids = [p.pid for p in procs]
+    # Look for a --port flag in the cmdline to report which port this instance is on
+    detected_ports = set()
+    for p in procs:
+        cmdline = " ".join(p.info.get("cmdline") or [])
+        m = re.search(r"--port[=\s]+(\d+)", cmdline)
+        if m:
+            detected_ports.add(int(m.group(1)))
+    port_info = f", on port(s) {sorted(detected_ports)}" if detected_ports else ""
     report.checks.append(CheckResult(
         name="gateway_process",
         severity=Severity.OK,
-        message=f"Gateway node process running (PID(s): {', '.join(str(p) for p in pids)}).",
-        details={"pids": pids},
+        message=f"Gateway process(es) running (PID(s): {', '.join(str(p) for p in pids)}{port_info}).",
+        details={"pids": pids, "detected_ports": sorted(detected_ports)},
     ))
 
 
 def check_port_bound(report: Report) -> None:
-    if _port_is_bound(GATEWAY_PORT):
+    port = report.gateway_port
+    if _port_is_bound(port):
         report.checks.append(CheckResult(
             name="port_bound",
             severity=Severity.OK,
-            message=f"Port {GATEWAY_PORT} is accepting TCP connections.",
+            message=f"Configured port {port} is accepting TCP connections.",
         ))
     else:
         report.checks.append(CheckResult(
             name="port_bound",
             severity=Severity.FAIL,
-            message=f"Port {GATEWAY_PORT} not bound. Gateway isn't listening.",
+            message=f"Configured port {port} not bound. Gateway isn't listening on the expected port. (Port source: {'openclaw.json' if CONFIG_PATH.exists() else 'default'})",
             fix="Start the gateway: run the gateway_process fix or `openclaw gateway install --force`.",
             fix_fn_name="fix_start_gateway",
         ))
 
 
 def check_http_health(report: Report) -> None:
-    ok, info = _http_healthz()
+    port = report.gateway_port
+    ok, info = _http_healthz(port)
+    url = f"http://127.0.0.1:{port}/healthz"
     if ok:
         report.checks.append(CheckResult(
             name="http_health",
             severity=Severity.OK,
-            message=f"{GATEWAY_HEALTH_URL} responded ({info}).",
+            message=f"{url} responded ({info}).",
         ))
     else:
         report.checks.append(CheckResult(
             name="http_health",
             severity=Severity.FAIL,
-            message=f"{GATEWAY_HEALTH_URL} not responding. Detail: {info}",
+            message=f"{url} not responding. Detail: {info}",
             fix="Restart the gateway. If the process is alive but the port isn't responding, kill and restart — likely a zombie.",
             fix_fn_name="fix_start_gateway",
         ))
 
 
-def check_startup_launcher(report: Report) -> None:
-    gateway_cmd = OPENCLAW_DIR / ("gateway.cmd" if _is_windows() else "gateway.sh")
-    if not gateway_cmd.exists():
+def check_startup_mechanism(report: Report) -> None:
+    """Report which startup mechanism(s) the gateway is configured to use."""
+    info = _detect_startup_mechanism()
+    active_mechanisms = [k for k, v in info.items() if v is True]
+    if not active_mechanisms:
         report.checks.append(CheckResult(
-            name="startup_launcher",
-            severity=Severity.FAIL,
-            message=f"Launcher script missing at {gateway_cmd}.",
+            name="startup_mechanism",
+            severity=Severity.WARN,
+            message=(
+                "No gateway startup mechanism detected (no Scheduled Task, no Startup-folder item, "
+                "no systemd unit, no launchd plist, no gateway.cmd/sh). Gateway won't auto-start at login."
+            ),
             fix="Run: openclaw gateway install --force",
             fix_fn_name="fix_reinstall_gateway",
+            details=info,
         ))
         return
-
-    if _is_windows():
-        startup_shortcut = (
-            Path(os.environ.get("APPDATA", ""))
-            / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-            / "OpenClaw Gateway.cmd"
-        )
-        if not startup_shortcut.exists():
-            report.checks.append(CheckResult(
-                name="startup_launcher",
-                severity=Severity.WARN,
-                message=f"gateway.cmd exists but Startup-folder shortcut missing at {startup_shortcut}. Gateway won't auto-start at next login.",
-                fix="Run: openclaw gateway install --force",
-                fix_fn_name="fix_reinstall_gateway",
-            ))
-            return
-
+    # Flag confusing states
+    if info["scheduled_task"] and info["startup_folder"]:
+        report.checks.append(CheckResult(
+            name="startup_mechanism",
+            severity=Severity.WARN,
+            message=(
+                "Both Scheduled Task AND Startup-folder launcher are present. "
+                "OpenClaw falls back to Startup-folder when Scheduled Task creation is denied — "
+                "having both can cause duplicate gateway instances. Pick one."
+            ),
+            details=info,
+        ))
+        return
     report.checks.append(CheckResult(
-        name="startup_launcher",
+        name="startup_mechanism",
         severity=Severity.OK,
-        message=f"Launcher script and startup hook present.",
+        message=f"Startup mechanism detected: {', '.join(active_mechanisms)}." + (" " + " ".join(info["notes"]) if info["notes"] else ""),
+        details=info,
     ))
+
+
+def check_session_1(report: Report) -> None:
+    """
+    OPT-IN: Only runs when --require-session 1 is passed. Checks that the gateway
+    process is running in an interactive user session (Session 1 on typical Windows),
+    not Session 0 (service session — no desktop access, no user UI).
+
+    Most users don't need this. It matters if you use the desktop-control skill that
+    interacts with the logged-in user's screen.
+    """
+    if not report.require_session_1 or not _is_windows():
+        return
+    pattern = re.compile(r"openclaw.*gateway|gateway.*openclaw", re.IGNORECASE)
+    procs = _find_process_by_cmdline_pattern(pattern)
+    procs = [p for p in procs if "claw-medic" not in " ".join(p.info.get("cmdline") or []).lower()]
+    if not procs:
+        return  # gateway-process check already flagged this
+    try:
+        for p in procs:
+            ps_cmd = (
+                f"(Get-Process -Id {p.pid} -ErrorAction SilentlyContinue).SessionId"
+            )
+            r = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=5,
+            )
+            sid = r.stdout.strip()
+            if sid == "0":
+                report.checks.append(CheckResult(
+                    name="session_1_required",
+                    severity=Severity.FAIL,
+                    message=(
+                        f"Gateway PID {p.pid} running in Session 0 (service session). "
+                        "Desktop-control skill will not work. Gateway must be launched from a "
+                        "user-interactive process to get a user session."
+                    ),
+                    fix="Stop gateway + relaunch via Startup-folder gateway.cmd (user session), "
+                        "not via Scheduled Task 'Run whether user is logged on or not'.",
+                ))
+                return
+        report.checks.append(CheckResult(
+            name="session_1_required",
+            severity=Severity.OK,
+            message="Gateway process is in an interactive user session (Session >0). Desktop skill viable.",
+        ))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
 
 
 def check_watchdog_process(report: Report) -> None:
@@ -580,7 +737,8 @@ CHECK_REGISTRY: dict[str, Callable[[Report], None]] = {
     "gateway_process": check_gateway_process,
     "port_bound": check_port_bound,
     "http_health": check_http_health,
-    "startup_launcher": check_startup_launcher,
+    "startup_mechanism": check_startup_mechanism,
+    "session_1_required": check_session_1,  # opt-in via --require-session 1
     "watchdog_process": check_watchdog_process,
     "scheduled_tasks": check_scheduled_tasks_health,
     "version": check_version_known_bugs,
@@ -591,16 +749,24 @@ CHECK_REGISTRY: dict[str, Callable[[Report], None]] = {
 # Grouping for --checks categories
 CHECK_GROUPS = {
     "gateway": ["gateway_process", "port_bound", "http_health"],
-    "startup": ["startup_launcher", "scheduled_tasks"],
+    "startup": ["startup_mechanism", "scheduled_tasks"],
     "watchdog": ["watchdog_process"],
     "bootstrap": ["bootstrap_budget"],
     "version": ["version"],
     "logs": ["gateway_log"],
+    "session": ["session_1_required"],
 }
 
 
-def run_checks(selected: Optional[list[str]] = None) -> Report:
+def run_checks(
+    selected: Optional[list[str]] = None,
+    port_override: Optional[int] = None,
+    require_session_1: bool = False,
+) -> Report:
     report = Report()
+    report.gateway_port = resolve_gateway_port(port_override)
+    report.require_session_1 = require_session_1
+
     names: list[str]
     if not selected:
         names = list(CHECK_REGISTRY.keys())
@@ -679,21 +845,35 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--quiet", action="store_true", help="only print FAIL/WARN lines")
     parser.add_argument("--checks", default="", help="comma-separated check or group names")
+    parser.add_argument("--port", type=int, default=None,
+                        help="override gateway port (default: read from openclaw.json / OPENCLAW_GATEWAY_PORT env / 18789)")
+    parser.add_argument("--require-session", default=None,
+                        help="on Windows: require gateway to run in session N (usually 1, for desktop-skill users). "
+                             "Default: off (most users don't need this).")
     args = parser.parse_args(argv)
 
     selected = [s.strip() for s in args.checks.split(",") if s.strip()] or None
-    report = run_checks(selected)
+    require_session_1 = args.require_session == "1"
+    report = run_checks(selected, port_override=args.port, require_session_1=require_session_1)
 
     if args.json:
-        print(json.dumps({"checks": [asdict(c) for c in report.checks]}, indent=2, default=str))
+        out = {
+            "gateway_port": report.gateway_port,
+            "require_session_1": report.require_session_1,
+            "checks": [asdict(c) for c in report.checks],
+        }
+        print(json.dumps(out, indent=2, default=str))
     else:
+        print(f"Gateway port (resolved): {report.gateway_port}"
+              + (f"   [session-1 required]" if report.require_session_1 else ""))
+        print()
         print_report(report, quiet=args.quiet)
 
     if args.fix:
         apply_fixes(report, cleanup_orphans=args.cleanup_orphans)
         # Re-run the checks after fixing to give the user an up-to-date picture
         print("\n--- re-checking after fixes ---\n")
-        post = run_checks(selected)
+        post = run_checks(selected, port_override=args.port, require_session_1=require_session_1)
         print_report(post, quiet=args.quiet)
         return post.exit_code
 
