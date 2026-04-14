@@ -261,6 +261,7 @@ Pre-1.0 commit history is visible in `git log` and documents the iteration that 
 - **v1.3** — `--watch` mode: stay running, re-check every N seconds, only emit on state change.
 - **v1.4** — `--collect` bundles gateway.log tail + openclaw.json + claw-medic output into a single `.zip` suitable for attaching to a forum post.
 - **v1.5** — Backport checks from `openclaw doctor` so claw-medic is a drop-in superset.
+- **v2.0 — "background agent mode" (the Kairos moment)** — When v1.1 + v1.2 + v1.3 + v1.4 combine, claw-medic can run as a single continuous background daemon: consolidates memory at idle, auto-heals the gateway, ships diagnostic reports back to maintainers, processes incoming bug reports, drafts fixes. Same shape as Anthropic's leaked Kairos design ([source code leak, March 31 2026](https://www.infoq.com/news/2026/04/claude-code-source-leak/)), built in public, MIT-licensed, inspectable. This is when the kit stops being a tool you run and becomes an agent that runs alongside yours.
 
 ---
 
