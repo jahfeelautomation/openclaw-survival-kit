@@ -4,7 +4,7 @@
 
 If your gateway crashes when you close a browser tab, if your heartbeat fires every 5 minutes instead of the 90 you configured, if your skills show as "enabled" but aren't actually loaded — this repo is for you.
 
-Each tool in this kit fixes one specific, documented OpenClaw bug. Install what you need. Ignore what you don't. All MIT, battle-tested running [Agent HQ](https://agenthq.pro) in production.
+Each tool in this kit fixes one specific, documented OpenClaw bug. Install what you need. Ignore what you don't. All MIT-licensed, built while getting our own OpenClaw deployment ready for [Agent HQ](https://agenthq.pro) (launching April 30, 2026) — so every fix is tested against a real agent running 24/7 before it ships here.
 
 ---
 
@@ -48,6 +48,8 @@ Shout out to everyone in the ecosystem. If a tool listed above fits your problem
 
 Each tool is a standalone folder. No global install, no framework lock-in.
 
+**Note on status:** This kit is early (v0.1 shipped April 2026). It's honest alpha — the patches are live and tested on our own setup, but nothing here has thousands of users yet. If you hit a rough edge, open an issue. That's how the kit gets better.
+
 ```bash
 git clone https://github.com/jahfeelautomation/openclaw-survival-kit.git
 cd openclaw-survival-kit/gateway-keeper
@@ -70,7 +72,7 @@ Each tool's own README has the full setup, config, and rollback instructions.
 
 ## If you'd rather pay us to run it
 
-We built this kit because we run Agent HQ on OpenClaw at scale and got tired of absorbing the same bugs weekly. If you don't want to touch any of this yourself, [Agent HQ](https://agenthq.pro) is the hosted version — we run the patched OpenClaw, you just use your agent.
+We built this kit because we're spinning up Agent HQ on OpenClaw and hit every bug in this repo while getting ready for launch. If you'd rather not maintain patches yourself, [Agent HQ](https://agenthq.pro) is the hosted version — we run the patched OpenClaw, you just use your agent. Launching April 30, 2026.
 
 Either way — this kit stays free, stays open, stays MIT.
 
@@ -80,7 +82,7 @@ Either way — this kit stays free, stays open, stays MIT.
 
 Found a bug we haven't covered? Open an issue with the upstream GitHub issue link and your repro steps. Want to add a tool? Read [CONTRIBUTING.md](./CONTRIBUTING.md) before sending a PR.
 
-The kit grows as Jeff (our production agent) hits new bugs. Every fix gets tested against a live workload before it ships here.
+The kit grows as Jeff (our daily-driver agent) hits new bugs. Every fix gets tested against a live workload before it ships here.
 
 ---
 

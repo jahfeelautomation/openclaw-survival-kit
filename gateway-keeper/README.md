@@ -2,7 +2,9 @@
 
 **Keep your OpenClaw gateway alive without `openclaw doctor --fix` on speed-dial.**
 
-A drop-in reliability wrapper for the OpenClaw gateway. Monitors health, auto-restarts on crash, and pre-patches three of the nastiest upstream bugs.
+A drop-in reliability wrapper for the OpenClaw gateway. Monitors health, auto-restarts on crash, and pre-patches the nastiest upstream bugs.
+
+**Status:** v0.1 alpha (April 2026). Works on our own setup. Haven't stress-tested on thousands of deployments yet. Expect rough edges — please open issues.
 
 ---
 
