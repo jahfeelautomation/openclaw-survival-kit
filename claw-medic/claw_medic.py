@@ -49,7 +49,7 @@ except ImportError:
 
 # ---------- constants ----------
 
-VERSION = "0.5"
+VERSION = "1.0"
 REPO_URL = "https://github.com/jahfeelautomation/openclaw-survival-kit"
 
 DEFAULT_GATEWAY_PORT = 18789  # upstream default — actual port is resolved from config/env/CLI

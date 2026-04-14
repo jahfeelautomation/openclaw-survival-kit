@@ -217,18 +217,32 @@ They're complementary, not competing.
 
 ---
 
-## Roadmap
+## Releases
 
-- [x] **v0.1** — 10 core checks, `--fix` mode, JSON output
-- [x] **v0.2** — Auto-detect port from `openclaw.json` / env / flag; auto-detect startup mechanism (Scheduled Task / Startup-folder / launchd / systemd / launcher script); Session-1 check made opt-in via `--require-session 1`; broader process matching (no hardcoded `--port 18789` assumption)
-- [x] **v0.3** — Fixed `--require-session` hang on multi-gateway setups (single combined PowerShell call with 10s timeout instead of per-PID deadlock); gateway log check now filters to last 24h so stale entries stop producing false positives; `--cleanup-orphans` now prints the exact elevated-shell command when access is denied instead of silently failing
-- [x] **v0.4** — `--conservative` mode: with `--fix`, skips `openclaw gateway install --force` (which would kill child services like HQ servers / watchdog children spawned by the gateway) and prints it as a manual step instead. Summary line now counts deferred fixes separately from applied fixes.
-- [x] **v0.5** — `--report` mode: PII-scrubbed diagnostic JSON + pre-filled GitHub issue URL for fix-failure reports. Nothing is auto-posted; user reviews and submits. Paired with `.github/ISSUE_TEMPLATE/fix-failure.yml` and `new-bug.yml` so reports are structured and machine-readable. First step of the community feedback loop: other OpenClaw users' fix-failure reports become the input for the next version's checks and tightened fixes.
-- [ ] **v0.6** — Daily triage task extension: read incoming kit issues, deduplicate against what's already known, draft PRs / replies for the maintainer to review. No auto-merge.
-- [ ] **v0.7** — Slack / Discord webhook alert on FAIL
-- [ ] **v0.8** — `--watch` mode: keep running, re-check every N seconds, alert on state change
-- [ ] **v0.9** — Automatic log collection → creates a single diagnostic zip for forum posts
-- [ ] **v1.0** — Backport checks from `openclaw doctor` so it's a drop-in superset
+### v1.0 — first public release (April 2026)
+
+Ships with:
+
+- **10 core health checks** across gateway process state, port binding, HTTP health, startup mechanism detection, watchdog presence, OpenClaw version, bootstrap budget, and 24-hour gateway log analysis.
+- **`--fix`** applies one-shot fixes for anything `FAIL` with a suggested fix.
+- **`--conservative`** safer `--fix` that never runs `openclaw gateway install --force` (which can kill child services spawned by the gateway). Prints the command as a manual step instead.
+- **`--report`** generates a PII-scrubbed diagnostic JSON and a pre-filled GitHub issue URL for fix-failure reports. Nothing is auto-posted.
+- **`--cleanup-orphans`** removes never-run scheduled tasks that clutter up `schtasks`.
+- **`--require-session N`** (Windows) asserts the gateway is running in an interactive user session (required for the desktop-control skill).
+- **`--json`**, **`--quiet`**, **`--checks`**, **`--port`** for scripting and narrow runs.
+- Auto-detects gateway port from `--port` flag → `OPENCLAW_GATEWAY_PORT` env → `~/.openclaw/openclaw.json` → `18789` (upstream default), matching OpenClaw's own precedence.
+- Auto-detects startup mechanism (Windows Scheduled Task, Startup-folder shortcut, `gateway.cmd`/`gateway.sh`, systemd unit, launchd plist) — no hardcoded assumption.
+- Structured `.github/ISSUE_TEMPLATE/` for fix-failure reports and new-bug / new-check requests so community feedback is machine-readable from day one.
+
+Pre-1.0 commit history is visible in `git log` and documents the iteration that got us here — multi-PID PowerShell deadlocks, stale log false positives, child-service cascades from `--force`, and the first cut of the community feedback loop. Every concern real users hit got a commit with a fix.
+
+### What's next
+
+- **v1.1** — Daily triage task extension: scan incoming kit issues, deduplicate automatically against what's already known, draft PRs and replies for a maintainer to review. Never auto-merges. Design doc: [`docs/v0.6-triage-design.md`](../docs/v0.6-triage-design.md) (named per the internal working label; shipped as v1.1).
+- **v1.2** — Slack / Discord webhook alerts when a check flips from `OK` to `FAIL`.
+- **v1.3** — `--watch` mode: stay running, re-check every N seconds, only emit on state change.
+- **v1.4** — `--collect` bundles gateway.log tail + openclaw.json + claw-medic output into a single `.zip` suitable for attaching to a forum post.
+- **v1.5** — Backport checks from `openclaw doctor` so claw-medic is a drop-in superset.
 
 ---
 
