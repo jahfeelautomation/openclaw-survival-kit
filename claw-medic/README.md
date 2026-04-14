@@ -8,6 +8,24 @@ No daemon to install, no config to write, no new scheduled task. You run it when
 
 ---
 
+## Safe operation on production infrastructure (READ THIS FIRST)
+
+This tool can touch processes, delete scheduled tasks, and reinstall your gateway. On your laptop that's fine. On a production machine running an agent that has child services depending on it — HQ servers, watchdogs, API bridges — default `--fix` can cascade and take those down with the gateway. The fix goes through; the child services don't come back.
+
+We ship with **safe defaults**. Follow these rules the first time you run claw-medic on a machine that matters:
+
+1. **Run diagnostic-only for the first week.** `python3 claw_medic.py` (no flags) just reports. Nothing changes. Read the output, confirm the checks match reality on your box. Do this for several days before you let it touch anything.
+2. **Always pair `--fix` with `--conservative`.** Plain `--fix` will run `openclaw gateway install --force` when it thinks the gateway needs reinstalling. `--force` kills whatever is on the gateway port so the new install can take over — which kills child services bound to or spawned by the gateway. `--conservative` skips that class of fix and prints the command for you to run manually when you're ready. Use it on any machine that isn't your throwaway laptop.
+3. **`--require-session 1` is opt-in for a reason.** It checks whether the gateway is in an interactive user session (needed for the desktop-control skill). On multi-PID gateway setups the check used to deadlock; v0.3+ fixed that, but the default is still off. Only turn it on if you actually use the desktop skill.
+4. **`--cleanup-orphans` deletes scheduled tasks.** Specifically, tasks that have `LastResult=267011` and have never run — in practice these are legacy cruft from old OpenClaw installs. But if you've just created a new scheduled task and it hasn't had a chance to run yet, claw-medic will think it's orphan. Either wait for your task to run once, or review the list before agreeing to the cleanup.
+5. **Always review what `--fix` wants to do before approving.** Run diagnostic-only first, read the `Suggested fix:` lines, then run `--fix --conservative` if they look reasonable.
+
+If your setup is anything beyond a single dev machine — think "a customer depends on this" — run claw-medic **read-only** on a cron, log the output somewhere, and let a human decide when to actually apply fixes. The checks are designed to be safe to run on a timer; the fixes are designed to be safe with `--conservative`; mixing the two in production without review is not the intended flow.
+
+The tool will never phone home, never open a network connection except to your local gateway, never write files outside the current directory (and only when you pass `--report`). No telemetry, no lock-in.
+
+---
+
 ## The incident that inspired this
 
 On April 14, 2026, our daily-driver agent went offline for 45 minutes. The gateway process died. Our custom watchdog didn't revive it. Our watchdog-of-the-watchdog scheduled task ran every 5 minutes and reported `LastResult=0` — "success." Except "success" was just "my PowerShell script exited cleanly." Nobody was actually checking if the gateway was serving requests on port 18789.
