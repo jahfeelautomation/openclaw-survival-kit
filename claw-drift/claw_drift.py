@@ -38,10 +38,14 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
-BOOTSTRAP_FILES = [
+# Core OpenClaw bootstrap files. BOOTSTRAP.md is optional (not present in
+# default installs) — treated as "skip if missing" rather than "missing = problem."
+BOOTSTRAP_FILES_REQUIRED = [
     "SOUL.md", "AGENTS.md", "MEMORY.md", "IDENTITY.md",
-    "TOOLS.md", "USER.md", "HEARTBEAT.md", "BOOTSTRAP.md",
+    "TOOLS.md", "USER.md", "HEARTBEAT.md",
 ]
+BOOTSTRAP_FILES_OPTIONAL = ["BOOTSTRAP.md"]
+BOOTSTRAP_FILES = BOOTSTRAP_FILES_REQUIRED + BOOTSTRAP_FILES_OPTIONAL
 PER_FILE_LIMIT = 20_000
 TOTAL_BUDGET = 150_000
 SNAPSHOT_FILE = ".claw-drift-snapshots.json"
@@ -141,7 +145,7 @@ def analyze(workspace: Path, snapshots_path: Path) -> Report:
             }
 
         if not exists:
-            status = "missing"
+            status = "optional-absent" if name in BOOTSTRAP_FILES_OPTIONAL else "missing"
         elif size > PER_FILE_LIMIT:
             status = "truncated"
         elif size > PER_FILE_LIMIT * 0.9:

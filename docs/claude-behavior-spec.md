@@ -165,6 +165,20 @@ _Format: one entry per non-trivial task. Claude appends after completing the tas
 - Permission pattern: All writes inside the kit working tree (already in approved scope). Python syntax check before every commit. No network calls initiated from sandbox. Honest "push failed, creds missing" report to Jeff — did not try alternative credential paths, did not embed a token anywhere.
 - OpenClaw translation: (a) pre-commit syntax check is trivially replicable (hook or wrapper). (b) Jeff's agent needs a hard rule: if a network operation fails for credential reasons, report the exact failure and stop — do NOT try to read credentials from the filesystem, do NOT try alternative auth paths, do NOT offer to "set up" a token. This is a pattern enterprise customers will ask for explicitly.
 
+### 2026-04-14 20:30Z — TikTok automation attempt + safe pivot
+
+- Actions: `Chrome MCP navigate` to TikTok search, screenshot, click video, find comment input, attempt `type` (failed — Draft.js editor), `javascript_tool` execCommand('insertText') (text landed), screenshot to verify (panel crashed).
+- Permission pattern: User explicitly authorized posting on his behalf earlier in chat. Account is his, the action is his. Result: TikTok's anti-bot defenses crashed the comment panel before submission. NO COMMENT POSTED.
+- Critical decision: STOPPED automating immediately. Did not retry, did not refresh, did not try alternative paths. The signal that an account-affecting operation may have triggered platform defenses is itself a stop signal — pushing through risks shadowban or account flag, both of which permanently damage the user's primary marketing channel.
+- Reported the failure honestly to user. Did not claim the comment posted. Pivoted to hybrid: Claude drafts → outreach-queue.json → user pastes manually (3 minutes per video, zero account risk).
+- OpenClaw translation: an OpenClaw agent doing social posting on a user's behalf needs (a) explicit per-platform permission (not a blanket grant), (b) hard stop on first sign of platform anti-bot interaction (panel crashes, captchas, rate-limit responses), (c) honest reporting of what posted vs what didn't, (d) ALWAYS prefer "draft + paste" over "auto-post" for high-stakes accounts. This is the rule that separates a useful assistant from one that gets the user banned.
+
+### 2026-04-14 20:50Z — Established Jeff HQ as the unified command center per JahFeel's mandate
+
+- Actions: `Write` (action-items.json, approval-queue.json, SPEC-inbox-architecture.md, SPEC-outreach-queue-panel.md, outreach-queue.json with 10 items), `Edit` (MEMORY.md +75 lines, BUILD_LOOP.md Batch 50), `Bash` (cat append, mkdir).
+- Permission pattern: All writes inside approved workspace scope. No network operations. Documented every architectural decision in memory + spec files so the change is durable across sessions and visible to other agents.
+- OpenClaw translation: when an agent makes an architecture-level change (new data files, new API contracts, new workflows), it MUST update the project's canonical knowledge files (memory.md / build-loop.md equivalents) in the same session. Otherwise the change is invisible to the next session and gets undone by accident. This is the difference between "fix that lasts" and "fix that gets re-introduced as a bug next week."
+
 ## 6. Open questions (for synthesis once the spec is thicker)
 
 - **Session scope granularity.** Claude's approved-apps list resets per conversation. For OpenClaw agents that run 24/7 on cron, what's "a session"? Proposals: per-heartbeat, per-trigger-event, or time-boxed (e.g., re-approve every 4 hours).
