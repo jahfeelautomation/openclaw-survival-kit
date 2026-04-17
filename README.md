@@ -12,7 +12,7 @@ Each tool in this kit fixes one specific, documented OpenClaw bug. Install what 
 
 OpenClaw is powerful, but the gateway is fragile. After months of running it 24/7, we hit the same bugs everyone else hits — and watched the same "fixes" blog posts tell us to just run `openclaw doctor --fix` and pray.
 
-We stopped praying. We started patching. This is the kit.
+We started patching. This is the kit.
 
 Every tool in this repo is tied to a real, open GitHub issue on the upstream OpenClaw repo. README sections cite the issue numbers so you can verify the bug before you install the fix.
 
