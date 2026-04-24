@@ -1,10 +1,8 @@
 # OpenClaw Survival Kit
 
-**The missing reliability layer for OpenClaw.**
+**Real fixes for real OpenClaw bugs.** A collection of standalone tools that patch the gaps upstream hasn't closed yet.
 
-If your gateway crashes when you close a browser tab, if your heartbeat fires every 5 minutes instead of the 90 you configured, if your skills show as "enabled" but aren't actually loaded — this repo is for you.
-
-Each tool in this kit fixes one specific, documented OpenClaw bug. Install what you need. Ignore what you don't. All MIT-licensed, built while getting our own OpenClaw deployment ready for [Agent HQ](https://agenthq.pro) (launching April 30, 2026) — so every fix is tested against a real agent running 24/7 before it ships here.
+**Updated:** 2026-04-23
 
 ---
 
@@ -18,18 +16,20 @@ Every tool in this repo is tied to a real, open GitHub issue on the upstream Ope
 
 ---
 
-## What's inside (v0.1 roadmap)
+## What's inside (v0.6)
 
 | Tool | Fixes | Status |
 |---|---|---|
 | [`gateway-keeper/`](./gateway-keeper) | Gateway crashes, SIGTERM on webchat disconnect ([#29827](https://github.com/openclaw/openclaw/issues/29827)), 3s handshake timeout ([#47931](https://github.com/openclaw/openclaw/issues/47931)), bonjour infinite restart loop ([#30183](https://github.com/openclaw/openclaw/issues/30183)) | **v0.1 shipped** |
 | [`claw-medic/`](./claw-medic) | Emergency CLI — diagnose + repair a sick gateway in one command. Catches the silent-failure mode where a scheduled task reports `LastResult=0` but the gateway is actually dead. No daemon, no config. | **v0.1 shipped** |
 | [`claw-drift/`](./claw-drift) | Bootstrap-file sanity scanner — truncation risk, budget overrun, cross-file contradictions, drift over time. CLI + JSON for cron / CI / watchdog. **Companion to [DanAndBub/Driftwatch](https://github.com/DanAndBub/Driftwatch)** — their browser tool does interactive triage, ours runs unattended and exits non-zero on issues. | **v1.0 shipped** |
-| [`claw-cron/`](./claw-cron) | Heartbeat interval collapse ([#27807](https://github.com/openclaw/openclaw/issues/27807)), silent cron failures ([#8414](https://github.com/openclaw/openclaw/issues/8414)), heartbeat stops after 1-2 triggers ([#45772](https://github.com/openclaw/openclaw/issues/45772)) | Planned |
-| [`claw-skills-lint/`](./claw-skills-lint) | Workspace skills silently not loading ([#29122](https://github.com/openclaw/openclaw/issues/29122), [#49873](https://github.com/openclaw/openclaw/issues/49873)), skills show enabled but aren't ([#9469](https://github.com/openclaw/openclaw/issues/9469)), v2026.4.10 sandbox break ([#64985](https://github.com/openclaw/openclaw/issues/64985)) | Planned |
-| [`claw-session-repair/`](./claw-session-repair) | Orphaned tool_use corrupts JSONL ([#3409](https://github.com/moltbot/moltbot/issues/3409), [#21985](https://github.com/openclaw/openclaw/issues/21985)), malformed tool call errors leaked to users ([#7867](https://github.com/openclaw/openclaw/issues/7867)) | Planned |
-| [`claw-channel-watch/`](./claw-channel-watch) | Telegram getUpdates timeout no reconnect ([#4617](https://github.com/openclaw/openclaw/issues/4617)), WhatsApp disconnects ([#22511](https://github.com/openclaw/openclaw/issues/22511)), channel crash on Discord ([#65548](https://github.com/openclaw/openclaw/issues/65548)) | Planned |
-| [`claw-pin/`](./claw-pin) | Update treadmill — pin a version, diff breaking changes before upgrading | Planned |
+| [`claw-ahm-audit/`](./claw-ahm-audit) | AHM workspace compliance auditor | **v0.6 new** |
+| [`claw-channel-watch/`](./claw-channel-watch) | Telegram getUpdates timeout no reconnect ([#4617](https://github.com/openclaw/openclaw/issues/4617)), WhatsApp disconnects ([#22511](https://github.com/openclaw/openclaw/issues/22511)), channel crash on Discord ([#65548](https://github.com/openclaw/openclaw/issues/65548)) | **v0.6 new** |
+| [`claw-cron/`](./claw-cron) | Heartbeat interval collapse ([#27807](https://github.com/openclaw/openclaw/issues/27807)), silent cron failures ([#8414](https://github.com/openclaw/openclaw/issues/8414)), heartbeat stops after 1-2 triggers ([#45772](https://github.com/openclaw/openclaw/issues/45772)) | **v0.6 new** |
+| [`claw-pin/`](./claw-pin) | Update treadmill — pin a version, diff breaking changes before upgrading | **v0.6 new** |
+| [`claw-reaper/`](./claw-reaper) | Stale process and resource cleanup | **v0.6 new** |
+| [`claw-session-repair/`](./claw-session-repair) | Orphaned tool_use corrupts JSONL ([#3409](https://github.com/moltbot/moltbot/issues/3409), [#21985](https://github.com/openclaw/openclaw/issues/21985)), malformed tool call errors leaked to users ([#7867](https://github.com/openclaw/openclaw/issues/7867)) | **v0.6 new** |
+| [`claw-skills-lint/`](./claw-skills-lint) | Workspace skills silently not loading ([#29122](https://github.com/openclaw/openclaw/issues/29122), [#49873](https://github.com/openclaw/openclaw/issues/49873)), skills show enabled but aren't ([#9469](https://github.com/openclaw/openclaw/issues/9469)), v2026.4.10 sandbox break ([#64985](https://github.com/openclaw/openclaw/issues/64985)) | **v0.6 new** |
 
 ---
 
@@ -50,7 +50,7 @@ Shout out to everyone in the ecosystem. If a tool listed above fits your problem
 
 Each tool is a standalone folder. No global install, no framework lock-in.
 
-**Note on status:** This kit is early (v0.1 shipped April 2026). It's honest alpha — the patches are live and tested on our own setup, but nothing here has thousands of users yet. If you hit a rough edge, open an issue. That's how the kit gets better.
+**Note on status:** This kit is at v0.6 (April 2026). The patches are live and tested on our own setup. If you hit a rough edge, open an issue. That's how the kit gets better.
 
 ```bash
 git clone https://github.com/jahfeelautomation/openclaw-survival-kit.git
@@ -72,22 +72,7 @@ Each tool's own README has the full setup, config, and rollback instructions.
 
 ---
 
-## If you'd rather pay us to run it
+## Docs
 
-We built this kit because we're spinning up Agent HQ on OpenClaw and hit every bug in this repo while getting ready for launch. If you'd rather not maintain patches yourself, [Agent HQ](https://agenthq.pro) is the hosted version — we run the patched OpenClaw, you just use your agent. Launching April 30, 2026.
-
-Either way — this kit stays free, stays open, stays MIT.
-
----
-
-## Contributing
-
-Found a bug we haven't covered? Open an issue with the upstream GitHub issue link and your repro steps. Want to add a tool? Read [CONTRIBUTING.md](./CONTRIBUTING.md) before sending a PR.
-
-The kit grows as Jeff (our daily-driver agent) hits new bugs. Every fix gets tested against a live workload before it ships here.
-
----
-
-**License:** MIT
-**Maintained by:** [@jahfeelautomation](https://github.com/jahfeelautomation)
-**Companion product:** [Agent HQ](https://agenthq.pro)
+- [`docs/watchdog-patterns.md`](./docs/watchdog-patterns.md) — watchdog design patterns
+- [`docs/blog-v0.6-announcement.md`](./docs/blog-v0.6-announcement.md) — v0.6 release announcement

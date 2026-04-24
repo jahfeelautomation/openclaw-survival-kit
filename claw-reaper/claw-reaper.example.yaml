@@ -1,0 +1,48 @@
+# claw-reaper configuration
+# Copy to claw-reaper.yaml and edit for your rig.
+# Run `claw-reaper check` to validate before starting the runtime.
+
+target:
+  # Path to your openclaw.json — the source of truth for compaction config.
+  openclaw_json: "~/.openclaw/openclaw.json"
+  # Where session JSONL files live. Reaper scans this tree.
+  sessions_dir: "~/.openclaw/sessions"
+
+budget:
+  # Steady-state RAM budget per agent, in bytes.
+  # Text-heavy sessions: 16 MiB is conservative.
+  # Image/attachment-heavy: bump to 64 MiB and review projections weekly.
+  ram_bytes_per_agent: 16777216
+  # How far into the future to project transcript growth, in minutes.
+  # Shorter = fewer false alarms, later warnings. Longer = earlier warnings, more noise.
+  projection_window_minutes: 240
+
+watchdog:
+  # How often to recompute projections.
+  check_interval_seconds: 60
+  # If true, reaper will force a compaction when projected > budget.
+  # Leave false in dry-run; flip on once you trust the projections.
+  trigger_compaction_on_projection_breach: false
+  # Thrash protection.
+  backoff_after_forced_compactions: 3
+  backoff_window_seconds: 600
+  backoff_pause_seconds: 300
+
+reaper:
+  # Checkpoint TTL reaper — independent of watchdog.
+  enabled: true
+  checkpoint_ttl_days: 7
+  run_interval_hours: 6
+  # Upstream #61447 workaround: reap regardless of compaction mode.
+  # Set to true only if you want the upstream (buggy) behavior.
+  respect_compaction_mode: false
+
+log:
+  # Leave unset to auto-detect per OS.
+  # path: "/var/log/claw-reaper.log"
+  max_size_mb: 50
+  rotate_keep: 5
+
+metrics:
+  enabled: false
+  port: 9092
